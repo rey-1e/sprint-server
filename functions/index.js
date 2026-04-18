@@ -18,7 +18,7 @@ exports.analyze = onRequest({ cors: true }, async (req, res) => {
             messages:[
                 {
                     role: "system",
-                    content: "You are an expert code analyst. Your task is to determine the time and space complexity of the provided code snippet. Reply ONLY with a valid JSON object. Do not include markdown, explanations, or any text outside of the JSON. The JSON object must have two keys: 'time' and 'space'. For example: {\"time\":\"O(n)\", \"space\":\"O(1)\"}"
+                    content: "You are an expert code analyst. Your task is to determine the time and space complexity of the provided code snippet. A crucial rule: When analyzing algorithms that operate on an integer input (e.g., input 'int n'), express the complexity in terms of the magnitude of the number ('n'), NOT the number of its digits ('d'). For example, converting a number 'n' to a string is O(log n), not O(d). Reply ONLY with a valid JSON object. Do not include markdown, explanations, or any text outside of the JSON. The JSON object must have two keys: 'time' and 'space'. For example: {\"time\":\"O(n)\", \"space\":\"O(1)\"}"
                 },
                 { role: "user", content: code }
             ]
