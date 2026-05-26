@@ -111,7 +111,7 @@ exports.findmybug = onRequest({ cors: true }, async (req, res) => {
             return res.status(200).json({ feedback: "🚨 Error: Method Not Allowed" });
         }
         
-        // NEW: Extract the context
+        // Extract the context
         const { code, problemTitle, problemContext } = req.body;
         
         if (!code) {
@@ -128,11 +128,11 @@ exports.findmybug = onRequest({ cors: true }, async (req, res) => {
             messages:[
                 {
                     role: "system",
-                    content: "if the code is already acceptable to leetcode submission, just say there are no errors. You are an expert algorithms debugger. Compare the user's code against the provided problem description. Identify the logical flaw, missing edge case, or syntax error. In EXACTLY 10 to 15 words, tell the user what is wrong. Be direct. Do not write code. Do not give the exact solution, just point out the flaw. BE PERFECT AND THINK BEFORE YOU SPEAK"
+                    content: "You are an expert algorithms debugger. Compare the user's code against the provided LeetCode problem description. If the code is already correct and acceptable to pass LeetCode, reply with exactly: 'There are no errors.' Otherwise, identify logical flaws, missing edge cases, or syntax errors. Format your response into at most 3 or 4 bullet points. Start each point with a dash and a space (e.g., '- '). Do NOT use letters (like A, B, C), numbers, or sub-bullets. Keep each bullet point extremely short and crisp, with a strict maximum of 12 words per point. Do not write any code or give the exact solution."
                 },
                 { 
                     role: "user", 
-                    // NEW: Inject the problem context alongside the code
+                    // Inject the problem context alongside the code
                     content: `Problem: ${problemTitle || "Unknown"}\n\nDescription:\n${problemContext || "No description provided."}\n\nUser Code:\n${code}` 
                 }
             ]
@@ -144,7 +144,6 @@ exports.findmybug = onRequest({ cors: true }, async (req, res) => {
             body: JSON.stringify(requestPayload)
         });
 
-        // ... (Keep your existing error handling and response extraction exactly as it is)
         if (!apiResponse.ok) {
             const errorText = await apiResponse.text();
             return res.status(200).json({ feedback: `🚨 DeepSeek API Error (${apiResponse.status}): ${errorText}` });
