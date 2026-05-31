@@ -538,26 +538,27 @@ exports.syncUser = onRequest({ cors: false }, async (req, res) => {
     try {
         const user = await getOrCreateUser(req);
 
-        // FIX: isLegacy means the request came from a browser/website WITHOUT
-        // X-Client-Version: 3.0. The website app.js and navbar.js both send that
-        // header correctly, so hitting this branch means a misconfigured caller.
-        // Return 200+error instead of 400 so the client can show a useful message.
         if (user.isLegacy) {
             console.warn("Sprint: syncUser called without X-Client-Version: 3.0");
             return res.status(400).json({ error: "Missing client version header." });
         }
 
-        return res.status(200).json({ success: true, sessionToken: user.sessionToken, email: user.email });
+        const now = admin.firestore.Timestamp.now();
+        const isPremium = (user.premiumUntil && user.premiumUntil.toMillis() > now.toMillis()) || false;
+
+        return res.status(200).json({ 
+            success: true, 
+            sessionToken: user.sessionToken, 
+            email: user.email,
+            isPremium: isPremium
+        });
     } catch (err) {
-        // FIX: Surface the real error type so it appears in browser network tab
         const isServerError = err.message?.startsWith("ServerError:");
         if (isServerError) {
-            // This is an infrastructure problem (Firestore rules, IAM, etc.) — 500
             const detail = err.message.replace("ServerError:", "");
             console.error("Sprint: syncUser infrastructure error:", detail);
             return res.status(500).json({ error: "ServerError", detail });
         }
-        // Genuine auth failure (bad/expired token)
         return res.status(401).json({ error: err.message });
     }
 });
