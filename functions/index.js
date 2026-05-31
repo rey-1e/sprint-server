@@ -174,10 +174,6 @@ const THEME_STYLES = {
   "rad-moss": { bgBase: "#090a06", bgSurface: "#1e2212", border: "#282e18", brand: "#b5e853" }
 };
 
-/**
- * Robust cross-origin header injection utility.
- * Catch preflight requests before they are rejected by POST checks.
- */
 function handleCors(req, res) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -189,40 +185,30 @@ function handleCors(req, res) {
     return false;
 }
 
-/**
- * Helper: Decodes and verifies Auth Tokens.
- * Securely distinguishes between un-updated legacy live users and new users.
- */
 async function getOrCreateUser(req) {
     const clientVersion = req.headers['x-client-version'];
     const authHeader = req.headers.authorization;
 
-    // 1. If it's the old live extension, treat as legacy so they do not crash (backwards compatible)
     if (clientVersion !== '3.0') {
         return { uid: null, isLegacy: true };
     }
 
-    // 2. If it is the new extension, they MUST provide an authorization token
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
         throw new Error("AuthRequired");
     }
 
     const token = authHeader.split("Bearer ")[1];
 
-    // Check if the received key is our long-lived secure sessionToken (Extension Access Pathway)
     const userQuery = await db.collection("users").where("sessionToken", "==", token).limit(1).get();
     if (!userQuery.empty) {
         const userDoc = userQuery.docs[0];
         const data = userDoc.data();
-        
-        // Safeguard usage model values for existing legacy profiles in memory
         if (!data.usage || typeof data.usage !== 'object') {
             data.usage = { complexity: 0, detailed: 0, bug: 0 };
         }
         return { uid: userDoc.id, ...data };
     }
 
-    // Otherwise, check for standard Firebase IdToken (Webpage Auth & Init Sync Pathways)
     try {
         const decodedToken = await admin.auth().verifyIdToken(token);
         const { uid, email } = decodedToken;
@@ -234,7 +220,6 @@ async function getOrCreateUser(req) {
         let userData;
 
         if (!doc.exists) {
-            // Generate non-expiring secure key on profile instantiation
             sessionToken = crypto.randomBytes(32).toString('hex');
             userData = {
                 email: email || "",
@@ -261,10 +246,6 @@ async function getOrCreateUser(req) {
 
         return { uid, ...userData, sessionToken };
     } catch (err) {
-        // FIX: Distinguish between a genuinely invalid token vs an infrastructure error
-        // (Firestore permission denied, IAM misconfiguration, network failure, etc.)
-        // Previously ALL errors were swallowed as "Unauthorized", making the real cause
-        // invisible in client logs and impossible to debug.
         const msg = err?.message || "";
         const isAuthError = (
             msg.includes("Firebase ID token") ||
@@ -275,11 +256,8 @@ async function getOrCreateUser(req) {
             err?.errorInfo?.code?.startsWith("auth/")
         );
         if (isAuthError) {
-            console.warn("Sprint: Token auth failure:", msg);
             throw new Error("Unauthorized");
         }
-        // Infrastructure errors (Firestore rules, IAM, network) — surface the real message
-        console.error("Sprint: Infrastructure error in getOrCreateUser:", err);
         throw new Error("ServerError:" + msg);
     }
 }
@@ -298,7 +276,6 @@ async function checkAndIncrementUsage(user, feature, limit) {
     }
 
     const userRef = db.collection("users").doc(user.uid);
-    // Safer set-merge query avoids element type mismatches if parent mapping is missing
     await userRef.set({
         usage: {
             [feature]: admin.firestore.FieldValue.increment(1)
@@ -308,7 +285,6 @@ async function checkAndIncrementUsage(user, feature, limit) {
     return true;
 }
 
-// 1. COMPLEXITY ANALYZER
 exports.analyze = onRequest({ cors: false }, async (req, res) => {
     if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
@@ -331,7 +307,7 @@ exports.analyze = onRequest({ cors: false }, async (req, res) => {
             messages:[
                 {
                     role: "system",
-                    content: "You are an expert code analyst. Your task is to determine the time and space complexity STRICTLY of the provided code snippet. A crucial rule: Analyze ONLY the actual execution of the written code. If the function body is empty, incomplete, or a boilerplate stub, evaluate its complexity based strictly on that minimal execution (typically O(1) time and O(1) space). Do NOT assume, extrapolate, or guess the complexity of the intended or standard solution based on the function name (e.g., 'twoSum'), class name, or comments. When analyzing algorithms that operate on an integer input (e.g., input 'int n'), express the complexity in terms of the magnitude of the number ('n'), NOT the number of its digits ('d'). For example, converting a number 'n' to a string is O(log n), not O(d). Reply ONLY with a valid JSON object. Do not include markdown, explanations, or any text outside of the JSON. The JSON object must have two keys: 'time' and 'space'. For example: {\"time\":\"O(n)\", \"space\":\"O(1)\"}"
+                    content: "You are an expert code analyst. Your task is to determine the time and space complexity of the provided code snippet. Analyze ONLY the actual execution of the written code. Reply ONLY with a valid JSON object containing 'time' and 'space' keys."
                 },
                 { role: "user", content: code }
             ]
@@ -362,7 +338,6 @@ exports.analyze = onRequest({ cors: false }, async (req, res) => {
     }
 });
 
-// 2. DETAILED POST-SUBMISSION ANALYSIS ENDPOINT
 exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
     if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
@@ -385,18 +360,18 @@ exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
             messages:[
                 {
                     role: "system",
-                    content: `You are an expert code reviewer. Analyze the LeetCode submission and return ONLY a valid JSON object. Do not include markdown blocks or extra text. Format MUST have exactly these string keys. Keep answers VERY SHORT AND CRISP (max 10-15 words per text field):
+                    content: `You are an expert code reviewer. Analyze the LeetCode submission and return ONLY a valid JSON object. Keep answers VERY SHORT AND CRISP (max 10-15 words per text field):
                     {
                         "summary": "1 short encouraging sentence based on the overall code.",
-                        "app_current": "Current data structures used (e.g., 'Hash Table / Array').",
-                        "app_suggested": "Optimal data structures to use (e.g., 'Hash Table / Two Pointers').",
-                        "app_keyidea": "1 short sentence explaining the core logic of the ideal approach.",
-                        "eff_current": "Current Time/Space complexity (e.g., 'O(NlogN)').",
-                        "eff_suggested": "Optimal Time/Space complexity (e.g., 'O(N)').",
+                        "app_current": "Current data structures used.",
+                        "app_suggested": "Optimal data structures to use.",
+                        "app_keyidea": "1 short sentence explaining the core logic.",
+                        "eff_current": "Current Time/Space complexity.",
+                        "eff_suggested": "Optimal Time/Space complexity.",
                         "eff_suggestions": "1 short sentence suggesting how to improve efficiency.",
-                        "sty_readability": "1 word (e.g., 'Excellent', 'Good', 'Needs Work').",
-                        "sty_structure": "1 word (e.g., 'Excellent', 'Good', 'Needs Work').",
-                        "sty_suggestions": "1 short sentence on code cleanliness or naming conventions."
+                        "sty_readability": "1 word evaluation.",
+                        "sty_structure": "1 word evaluation.",
+                        "sty_suggestions": "1 short sentence on cleanliness."
                     }`
                 },
                 { role: "user", content: code }
@@ -428,12 +403,11 @@ exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
     }
 });
 
-// 3. AI DEBUGGER "WHERE AM I WRONG" ENDPOINT
 exports.findmybug = onRequest({ cors: false }, async (req, res) => {
     if (handleCors(req, res)) return;
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+
     try {
-        if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-        
         const user = await getOrCreateUser(req);
         const allowed = await checkAndIncrementUsage(user, "bug", 3);
         if (!allowed) {
@@ -442,12 +416,12 @@ exports.findmybug = onRequest({ cors: false }, async (req, res) => {
 
         const { code, problemTitle, problemContext } = req.body;
         if (!code) {
-            return res.status(200).json({ feedback: "🚨 Error: No code received by server." });
+            return res.status(400).json({ error: "No code received by server." });
         }
 
         const apiKey = process.env.DEEPSEEK_API_KEY;
         if (!apiKey) {
-            return res.status(200).json({ feedback: "🚨 Server config error: Missing DEEPSEEK_API_KEY." });
+            return res.status(500).json({ error: "Missing DEEPSEEK_API_KEY configuration." });
         }
 
         const requestPayload = {
@@ -455,7 +429,7 @@ exports.findmybug = onRequest({ cors: false }, async (req, res) => {
             messages:[
                 {
                     role: "system",
-                    content: "You are an expert algorithms debugger. Analyze the user's code strictly against the provided LeetCode problem description to determine if it correctly solves the problem. Focus strictly on whether the code is a fully working, correct solution that satisfies the task requirements. If the code successfully solves the problem, passes all test cases, and is logically correct (even if it uses an inefficient, brute-force O(N^4) approach), you must reply with EXACTLY: 'There are no errors.' Absolutely do NOT recommend optimizations, cleaner style, alternative algorithms, or time/space complexity improvements. If the code is a placeholder stub, does not implement the required logic, returns incorrect answers, fails to satisfy the description, or contains logical/syntax bugs, it is INCORRECT; you must identify what is missing or wrong. Format your feedback into at most 3 or 4 bullet points. Start each point with a dash and a space (e.g., '- '). Do NOT use letters, numbers, or sub-bullets. Keep each bullet point extremely short and crisp (maximum of 12 words per point). Do not write any code, and do not provide the exact solution."
+                    content: "You are an expert algorithms debugger. Analyze the user's code against the provided LeetCode problem description. If correct, reply with EXACTLY: 'There are no errors.' Otherwise, provide at most 3 or 4 short bullet points outlining the issues."
                 },
                 { 
                     role: "user", 
@@ -471,26 +445,24 @@ exports.findmybug = onRequest({ cors: false }, async (req, res) => {
         });
 
         if (!apiResponse.ok) {
-            const errorText = await apiResponse.text();
-            return res.status(200).json({ feedback: `🚨 DeepSeek API Error (${apiResponse.status}): ${errorText}` });
+            throw new Error(`API Error ${apiResponse.status}`);
         }
 
         const responseData = await apiResponse.json();
-        if (!responseData.choices || !responseData.choices[0] || !responseData.choices[0].message) {
-            return res.status(200).json({ feedback: `🚨 Unexpected API format: ${JSON.stringify(responseData)}` });
-        }
-
         const messageContent = responseData.choices[0].message.content.trim();
         return res.status(200).json({ feedback: messageContent });
 
     } catch (error) {
-        if (error.message === "AuthRequired") return res.status(200).json({ authRequired: true, feedback: "🚨 Auth Required: Sign in to LeetCode Sprint." });
-        if (error.message === "Unauthorized") return res.status(200).json({ feedback: "🚨 Session expired. Please sign in again." });
-        return res.status(200).json({ feedback: `🚨 Fatal Server Error: ${error.message}` });
+        if (error.message === "AuthRequired") {
+            return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint.' });
+        }
+        if (error.message === "Unauthorized") {
+            return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
+        }
+        return res.status(500).json({ error: `Server error: ${error.message}` });
     }
 });
 
-// 4. THEME RETRIEVAL ENDPOINT (Premium Only)
 exports.getTheme = onRequest({ cors: false }, async (req, res) => {
     if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).send();
@@ -531,7 +503,6 @@ exports.getTheme = onRequest({ cors: false }, async (req, res) => {
     }
 });
 
-// 5. USER SESSION TOKEN SYNC ENDPOINT
 exports.syncUser = onRequest({ cors: false }, async (req, res) => {
     if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).send();
@@ -539,37 +510,47 @@ exports.syncUser = onRequest({ cors: false }, async (req, res) => {
         const user = await getOrCreateUser(req);
 
         if (user.isLegacy) {
-            console.warn("Sprint: syncUser called without X-Client-Version: 3.0");
             return res.status(400).json({ error: "Missing client version header." });
         }
 
         const now = admin.firestore.Timestamp.now();
         const isPremium = (user.premiumUntil && user.premiumUntil.toMillis() > now.toMillis()) || false;
+        const premiumUntilMillis = user.premiumUntil ? user.premiumUntil.toMillis() : null;
 
         return res.status(200).json({ 
             success: true, 
             sessionToken: user.sessionToken, 
             email: user.email,
-            isPremium: isPremium
+            isPremium: isPremium,
+            premiumUntil: premiumUntilMillis
         });
     } catch (err) {
         const isServerError = err.message?.startsWith("ServerError:");
         if (isServerError) {
             const detail = err.message.replace("ServerError:", "");
-            console.error("Sprint: syncUser infrastructure error:", detail);
             return res.status(500).json({ error: "ServerError", detail });
         }
         return res.status(401).json({ error: err.message });
     }
 });
 
-// 6. RAZORPAY ORDER GENERATION ENDPOINT
 exports.createRazorpayOrder = onRequest({ cors: false }, async (req, res) => {
     if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).send();
     
+    try {
+        // Enforce active session validation before creating Razorpay orders
+        await getOrCreateUser(req);
+    } catch (authErr) {
+        return res.status(401).json({ error: "AUTH_REQUIRED", message: "Sign in required before initiating purchases." });
+    }
+
     const { planType } = req.body; 
-    let amountInPaise = planType === "1day" ? 100 : 59500; // ~$1 and ~$7 in INR (Paise)
+    if (planType !== "1day" && planType !== "30days") {
+        return res.status(400).json({ error: "Invalid planType selection." });
+    }
+
+    const amountInPaise = planType === "1day" ? 4250 : 25500;
 
     try {
         const order = await razorpay.orders.create({
@@ -579,12 +560,10 @@ exports.createRazorpayOrder = onRequest({ cors: false }, async (req, res) => {
         });
         return res.status(200).json(order);
     } catch (err) {
-        console.error("Razorpay order creation failure:", err);
         return res.status(500).json({ error: "Unable to process payment gateway order." });
     }
 });
 
-// 7. RAZORPAY TRANSACTION VERIFICATION ENDPOINT
 exports.verifyPayment = onRequest({ cors: false }, async (req, res) => {
     if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).send();
@@ -592,27 +571,27 @@ exports.verifyPayment = onRequest({ cors: false }, async (req, res) => {
     try {
         const user = await getOrCreateUser(req);
 
-        // FIX: The old code returned "Unauthorized operation" for legacy/missing version header.
-        // This was being silently triggered because app.js was not sending X-Client-Version: 3.0
-        // on the verifyPayment call — meaning real paying users got rejected after money was taken.
-        // Now we return a clear, specific error so it's never silent.
         if (user.isLegacy) {
-            console.error("Sprint: verifyPayment called without X-Client-Version: 3.0 — payment will NOT be credited. razorpay_payment_id:", req.body?.razorpay_payment_id);
             return res.status(401).json({ 
-                error: "Missing client version header. Payment received but not credited. Contact support with your payment ID." 
+                error: "Missing client version header. Contact support with your payment ID." 
             });
         }
 
         const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planType } = req.body;
 
-        // Validate all required fields are present before touching Razorpay
         if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
             return res.status(400).json({ error: "Missing payment parameters." });
         }
 
+        // PREVENT DOUBLE-SPEND REPLAY: Idempotency enforcement on payments database collection
+        const paymentRef = db.collection("payments").doc(razorpay_payment_id);
+        const paymentDoc = await paymentRef.get();
+        if (paymentDoc.exists) {
+            return res.status(409).json({ error: "REPLAY_ATTEMPT", message: "This payment transaction has already been credited." });
+        }
+
         const razorpaySecret = process.env.RAZORPAY_KEY_SECRET;
         if (!razorpaySecret || razorpaySecret === "placeholder_key_secret") {
-            console.error("Sprint: RAZORPAY_KEY_SECRET is not configured!");
             return res.status(500).json({ error: "Payment gateway not configured on server." });
         }
 
@@ -622,32 +601,37 @@ exports.verifyPayment = onRequest({ cors: false }, async (req, res) => {
             .digest('hex');
 
         if (generatedSignature !== razorpay_signature) {
-            console.error("Sprint: Signature mismatch for payment", razorpay_payment_id);
             return res.status(400).json({ error: "Tampered or invalid signature parameters." });
         }
 
         const addedDays = planType === "1day" ? 1 : 30;
         const now = new Date();
-        let currentExpiry = new Date(now); // FIX: clone now, don't mutate it
+        let currentExpiry = new Date(now);
 
         if (user.premiumUntil) {
             const currentVal = user.premiumUntil.toDate();
             if (currentVal > now) {
-                currentExpiry = new Date(currentVal); // FIX: clone, don't mutate
+                currentExpiry = new Date(currentVal);
             }
         }
         currentExpiry.setDate(currentExpiry.getDate() + addedDays);
 
+        // Transactional commit sequence: write payment verification record first, then update expiry
+        await paymentRef.set({
+            userId: user.uid,
+            orderId: razorpay_order_id,
+            planType: planType,
+            verifiedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
         await db.collection("users").doc(user.uid).set({
             premiumUntil: admin.firestore.Timestamp.fromDate(currentExpiry),
-            lastPaymentId: razorpay_payment_id, // store for support reference
+            lastPaymentId: razorpay_payment_id,
             lastPaymentAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
-        console.log(`Sprint: Premium granted to ${user.uid} until ${currentExpiry.toISOString()}`);
-        return res.status(200).json({ success: true, expiry: currentExpiry.toISOString() });
+        return res.status(200).json({ success: true, expiry: currentExpiry.getTime() });
     } catch (err) {
-        console.error("Sprint: verifyPayment fatal error:", err);
         return res.status(500).json({ error: err.message });
     }
 });
