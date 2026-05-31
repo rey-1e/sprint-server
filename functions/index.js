@@ -13,7 +13,6 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET || "placeholder_key_secret",
 });
 
-// Structural layout stylesheet rules hosted entirely on the server.
 const SECURE_LAYOUT_BASE_CSS = `
 html[data-lc-theme] {
   --layer-bg-pure: var(--bg-base) !important;
@@ -175,32 +174,91 @@ const THEME_STYLES = {
   "rad-moss": { bgBase: "#090a06", bgSurface: "#1e2212", border: "#282e18", brand: "#b5e853" }
 };
 
+/**
+ * Helper: Applies robust CORS headers and intercepts preflight OPTIONS requests.
+ */
+function handleCors(req, res) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Client-Version");
+    if (req.method === "OPTIONS") {
+        res.status(204).send("");
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Helper: Decodes and verifies Auth Tokens.
+ * Securely distinguishes between un-updated legacy live users and new users.
+ */
 async function getOrCreateUser(req) {
+    const clientVersion = req.headers['x-client-version'];
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-        return { uid: null, isLegacy: true }; 
+
+    // 1. If it's the old live extension, treat as legacy so they do not crash (backwards compatible)
+    if (clientVersion !== '3.0') {
+        return { uid: null, isLegacy: true };
     }
 
-    const idToken = authHeader.split("Bearer ")[1];
+    // 2. If it is the new extension, they MUST provide an authorization token
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        throw new Error("AuthRequired");
+    }
+
+    const token = authHeader.split("Bearer ")[1];
+
+    // Check if the received key is our long-lived secure sessionToken (Extension Access Pathway)
+    const userQuery = await db.collection("users").where("sessionToken", "==", token).limit(1).get();
+    if (!userQuery.empty) {
+        const userDoc = userQuery.docs[0];
+        const data = userDoc.data();
+        
+        // Safeguard usage model values for existing legacy profiles in memory
+        if (!data.usage || typeof data.usage !== 'object') {
+            data.usage = { complexity: 0, detailed: 0, bug: 0 };
+        }
+        return { uid: userDoc.id, ...data };
+    }
+
+    // Otherwise, check for standard Firebase IdToken (Webpage Auth & Init Sync Pathways)
     try {
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        const decodedToken = await admin.auth().verifyIdToken(token);
         const { uid, email } = decodedToken;
 
         const userRef = db.collection("users").doc(uid);
         const doc = await userRef.get();
 
+        let sessionToken;
+        let userData;
+
         if (!doc.exists) {
-            const newUser = {
+            // Generate non-expiring secure key on profile instantiation
+            sessionToken = crypto.randomBytes(32).toString('hex');
+            userData = {
                 email: email || "",
                 premiumUntil: null,
+                sessionToken: sessionToken,
                 usage: { complexity: 0, detailed: 0, bug: 0 },
                 createdAt: admin.firestore.FieldValue.serverTimestamp()
             };
-            await userRef.set(newUser);
-            return { uid, ...newUser };
+            await userRef.set(userData);
+        } else {
+            userData = doc.data();
+            if (!userData.sessionToken) {
+                sessionToken = crypto.randomBytes(32).toString('hex');
+                await userRef.update({ sessionToken });
+                userData.sessionToken = sessionToken;
+            } else {
+                sessionToken = userData.sessionToken;
+            }
         }
 
-        return { uid, ...doc.data() };
+        if (!userData.usage || typeof userData.usage !== 'object') {
+            userData.usage = { complexity: 0, detailed: 0, bug: 0 };
+        }
+
+        return { uid, ...userData, sessionToken };
     } catch (err) {
         console.error("Token verification failed:", err);
         throw new Error("Unauthorized");
@@ -221,14 +279,19 @@ async function checkAndIncrementUsage(user, feature, limit) {
     }
 
     const userRef = db.collection("users").doc(user.uid);
-    await userRef.update({
-        [`usage.${feature}`]: admin.firestore.FieldValue.increment(1)
-    });
+    // Safer set-merge query avoids element type mismatches if parent mapping is missing
+    await userRef.set({
+        usage: {
+            [feature]: admin.firestore.FieldValue.increment(1)
+        }
+    }, { merge: true });
+
     return true;
 }
 
-// 1. COMPLEXITY ANALYZER ENDPOINT
-exports.analyze = onRequest({ cors: true }, async (req, res) => {
+// 1. COMPLEXITY ANALYZER
+exports.analyze = onRequest({ cors: false }, async (req, res) => {
+    if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
     try {
@@ -274,13 +337,15 @@ exports.analyze = onRequest({ cors: true }, async (req, res) => {
         return res.status(200).json(parsedData);
 
     } catch (error) {
-        if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized' });
+        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint to analyze.' });
+        if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
         return res.status(500).json({ error: 'Failed to analyze code' });
     }
 });
 
 // 2. DETAILED POST-SUBMISSION ANALYSIS ENDPOINT
-exports.analyzeDetailed = onRequest({ cors: true }, async (req, res) => {
+exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
+    if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     
     try {
@@ -338,13 +403,15 @@ exports.analyzeDetailed = onRequest({ cors: true }, async (req, res) => {
         return res.status(200).json(parsedData);
 
     } catch (error) {
-        if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized' });
+        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint to analyze submissions.' });
+        if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
         return res.status(500).json({ error: 'Failed to analyze detailed code' });
     }
 });
 
 // 3. AI DEBUGGER "WHERE AM I WRONG" ENDPOINT
-exports.findmybug = onRequest({ cors: true }, async (req, res) => {
+exports.findmybug = onRequest({ cors: false }, async (req, res) => {
+    if (handleCors(req, res)) return;
     try {
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
         
@@ -398,13 +465,15 @@ exports.findmybug = onRequest({ cors: true }, async (req, res) => {
         return res.status(200).json({ feedback: messageContent });
 
     } catch (error) {
-        if (error.message === "Unauthorized") return res.status(401).json({ feedback: "🚨 Unauthorized. Please sign in." });
+        if (error.message === "AuthRequired") return res.status(200).json({ authRequired: true, feedback: "🚨 Auth Required: Sign in to LeetCode Sprint." });
+        if (error.message === "Unauthorized") return res.status(200).json({ feedback: "🚨 Session expired. Please sign in again." });
         return res.status(200).json({ feedback: `🚨 Fatal Server Error: ${error.message}` });
     }
 });
 
-// 4. THEME RETRIEVAL ENDPOINT (Returns full layout stylesheet string + variables securely)
-exports.getTheme = onRequest({ cors: true }, async (req, res) => {
+// 4. THEME RETRIEVAL ENDPOINT (Premium Only)
+exports.getTheme = onRequest({ cors: false }, async (req, res) => {
+    if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).send();
 
     try {
@@ -425,7 +494,6 @@ exports.getTheme = onRequest({ cors: true }, async (req, res) => {
         const vars = THEME_STYLES[themeName];
         if (!vars) return res.status(404).json({ error: "Theme config not found." });
 
-        // Compile color variables & full structural adjustments securely on server
         const compiledCSS = `
           :root, html[data-lc-theme="${themeName}"] {
             --bg-base: ${vars.bgBase} !important;
@@ -438,17 +506,34 @@ exports.getTheme = onRequest({ cors: true }, async (req, res) => {
 
         return res.status(200).json({ success: true, fullCSS: compiledCSS });
     } catch (err) {
+        if (err.message === "AuthRequired") return res.status(401).json({ error: "AUTH_REQUIRED", message: "Please sign in to access themes." });
         if (err.message === "Unauthorized") return res.status(401).json({ error: "Unauthorized" });
         return res.status(500).json({ error: "Internal Server Error" });
     }
 });
 
-// 5. RAZORPAY ORDER GENERATION ENDPOINT
-exports.createRazorpayOrder = onRequest({ cors: true }, async (req, res) => {
+// 5. USER SESSION TOKEN SYNC ENDPOINT
+exports.syncUser = onRequest({ cors: false }, async (req, res) => {
+    if (handleCors(req, res)) return;
+    if (req.method !== 'POST') return res.status(405).send();
+    try {
+        const user = await getOrCreateUser(req);
+        if (user.isLegacy) {
+            return res.status(400).json({ error: "Legacy operations not supported." });
+        }
+        return res.status(200).json({ success: true, sessionToken: user.sessionToken, email: user.email });
+    } catch (err) {
+        return res.status(401).json({ error: err.message });
+    }
+});
+
+// 6. RAZORPAY ORDER GENERATION ENDPOINT
+exports.createRazorpayOrder = onRequest({ cors: false }, async (req, res) => {
+    if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).send();
     
     const { planType } = req.body; 
-    let amountInPaise = planType === "1day" ? 100 : 59500; // ~$1 and ~$7 in INR (Paise)
+    let amountInPaise = planType === "1day" ? 8500 : 59500; // ~$1 and ~$7 in INR (Paise)
 
     try {
         const order = await razorpay.orders.create({
@@ -463,8 +548,9 @@ exports.createRazorpayOrder = onRequest({ cors: true }, async (req, res) => {
     }
 });
 
-// 6. RAZORPAY TRANSACTION VERIFICATION ENDPOINT
-exports.verifyPayment = onRequest({ cors: true }, async (req, res) => {
+// 7. RAZORPAY TRANSACTION VERIFICATION ENDPOINT
+exports.verifyPayment = onRequest({ cors: false }, async (req, res) => {
+    if (handleCors(req, res)) return;
     if (req.method !== 'POST') return res.status(405).send();
 
     try {
