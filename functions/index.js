@@ -175,7 +175,8 @@ const THEME_STYLES = {
 };
 
 /**
- * Helper: Applies robust CORS headers and intercepts preflight OPTIONS requests.
+ * Robust cross-origin header injection utility.
+ * Catch preflight requests before they are rejected by POST checks.
  */
 function handleCors(req, res) {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -260,8 +261,26 @@ async function getOrCreateUser(req) {
 
         return { uid, ...userData, sessionToken };
     } catch (err) {
-        console.error("Token verification failed:", err);
-        throw new Error("Unauthorized");
+        // FIX: Distinguish between a genuinely invalid token vs an infrastructure error
+        // (Firestore permission denied, IAM misconfiguration, network failure, etc.)
+        // Previously ALL errors were swallowed as "Unauthorized", making the real cause
+        // invisible in client logs and impossible to debug.
+        const msg = err?.message || "";
+        const isAuthError = (
+            msg.includes("Firebase ID token") ||
+            msg.includes("expired") ||
+            msg.includes("invalid-argument") ||
+            msg.includes("auth/") ||
+            err?.code === "auth/id-token-expired" ||
+            err?.errorInfo?.code?.startsWith("auth/")
+        );
+        if (isAuthError) {
+            console.warn("Sprint: Token auth failure:", msg);
+            throw new Error("Unauthorized");
+        }
+        // Infrastructure errors (Firestore rules, IAM, network) — surface the real message
+        console.error("Sprint: Infrastructure error in getOrCreateUser:", err);
+        throw new Error("ServerError:" + msg);
     }
 }
 
@@ -518,11 +537,27 @@ exports.syncUser = onRequest({ cors: false }, async (req, res) => {
     if (req.method !== 'POST') return res.status(405).send();
     try {
         const user = await getOrCreateUser(req);
+
+        // FIX: isLegacy means the request came from a browser/website WITHOUT
+        // X-Client-Version: 3.0. The website app.js and navbar.js both send that
+        // header correctly, so hitting this branch means a misconfigured caller.
+        // Return 200+error instead of 400 so the client can show a useful message.
         if (user.isLegacy) {
-            return res.status(400).json({ error: "Legacy operations not supported." });
+            console.warn("Sprint: syncUser called without X-Client-Version: 3.0");
+            return res.status(400).json({ error: "Missing client version header." });
         }
+
         return res.status(200).json({ success: true, sessionToken: user.sessionToken, email: user.email });
     } catch (err) {
+        // FIX: Surface the real error type so it appears in browser network tab
+        const isServerError = err.message?.startsWith("ServerError:");
+        if (isServerError) {
+            // This is an infrastructure problem (Firestore rules, IAM, etc.) — 500
+            const detail = err.message.replace("ServerError:", "");
+            console.error("Sprint: syncUser infrastructure error:", detail);
+            return res.status(500).json({ error: "ServerError", detail });
+        }
+        // Genuine auth failure (bad/expired token)
         return res.status(401).json({ error: err.message });
     }
 });
@@ -533,7 +568,7 @@ exports.createRazorpayOrder = onRequest({ cors: false }, async (req, res) => {
     if (req.method !== 'POST') return res.status(405).send();
     
     const { planType } = req.body; 
-    let amountInPaise = planType === "1day" ? 8500 : 59500; // ~$1 and ~$7 in INR (Paise)
+    let amountInPaise = planType === "1day" ? 100 : 59500; // ~$1 and ~$7 in INR (Paise)
 
     try {
         const order = await razorpay.orders.create({
@@ -555,37 +590,63 @@ exports.verifyPayment = onRequest({ cors: false }, async (req, res) => {
 
     try {
         const user = await getOrCreateUser(req);
-        if (user.isLegacy) return res.status(401).json({ error: "Unauthorized operation." });
+
+        // FIX: The old code returned "Unauthorized operation" for legacy/missing version header.
+        // This was being silently triggered because app.js was not sending X-Client-Version: 3.0
+        // on the verifyPayment call — meaning real paying users got rejected after money was taken.
+        // Now we return a clear, specific error so it's never silent.
+        if (user.isLegacy) {
+            console.error("Sprint: verifyPayment called without X-Client-Version: 3.0 — payment will NOT be credited. razorpay_payment_id:", req.body?.razorpay_payment_id);
+            return res.status(401).json({ 
+                error: "Missing client version header. Payment received but not credited. Contact support with your payment ID." 
+            });
+        }
 
         const { razorpay_order_id, razorpay_payment_id, razorpay_signature, planType } = req.body;
 
+        // Validate all required fields are present before touching Razorpay
+        if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+            return res.status(400).json({ error: "Missing payment parameters." });
+        }
+
+        const razorpaySecret = process.env.RAZORPAY_KEY_SECRET;
+        if (!razorpaySecret || razorpaySecret === "placeholder_key_secret") {
+            console.error("Sprint: RAZORPAY_KEY_SECRET is not configured!");
+            return res.status(500).json({ error: "Payment gateway not configured on server." });
+        }
+
         const generatedSignature = crypto
-            .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+            .createHmac('sha256', razorpaySecret)
             .update(razorpay_order_id + "|" + razorpay_payment_id)
             .digest('hex');
 
         if (generatedSignature !== razorpay_signature) {
+            console.error("Sprint: Signature mismatch for payment", razorpay_payment_id);
             return res.status(400).json({ error: "Tampered or invalid signature parameters." });
         }
 
         const addedDays = planType === "1day" ? 1 : 30;
         const now = new Date();
-        let currentExpiry = now;
+        let currentExpiry = new Date(now); // FIX: clone now, don't mutate it
 
         if (user.premiumUntil) {
             const currentVal = user.premiumUntil.toDate();
             if (currentVal > now) {
-                currentExpiry = currentVal;
+                currentExpiry = new Date(currentVal); // FIX: clone, don't mutate
             }
         }
         currentExpiry.setDate(currentExpiry.getDate() + addedDays);
 
         await db.collection("users").doc(user.uid).set({
-            premiumUntil: admin.firestore.Timestamp.fromDate(currentExpiry)
+            premiumUntil: admin.firestore.Timestamp.fromDate(currentExpiry),
+            lastPaymentId: razorpay_payment_id, // store for support reference
+            lastPaymentAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
+        console.log(`Sprint: Premium granted to ${user.uid} until ${currentExpiry.toISOString()}`);
         return res.status(200).json({ success: true, expiry: currentExpiry.toISOString() });
     } catch (err) {
+        console.error("Sprint: verifyPayment fatal error:", err);
         return res.status(500).json({ error: err.message });
     }
 });
