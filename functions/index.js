@@ -303,15 +303,28 @@ exports.analyze = onRequest({ cors: false }, async (req, res) => {
         if (!apiKey) return res.status(500).json({ error: 'Server configuration error' });
 
         const requestPayload = {
-            model: "deepseek-coder",
-            messages:[
-                {
-                    role: "system",
-                    content: "You are an expert code analyst. Your task is to determine the time and space complexity of the provided code snippet. Analyze ONLY the actual execution of the written code. Reply ONLY with a valid JSON object containing 'time' and 'space' keys."
-                },
-                { role: "user", content: code }
-            ]
-        };
+    model: "deepseek-coder",
+    messages:[
+        {
+            role: "system",
+            content: `You are an elite computer science professor and expert performance analyst.
+Determine the worst-case Time Complexity and Space Complexity of the provided code snippet using strict Big O notation.
+
+STRICT RULES:
+1. TIME COMPLEXITY: Account for worst-case nested loops, recursions, and internal library functions (e.g., sorting is O(n log n), slicing is O(k)). State this as O(expression).
+2. SPACE COMPLEXITY: Account only for extra auxiliary memory allocated by your algorithm (hash tables, trees, recursive call stack). Do NOT count the input variables/structures themselves as auxiliary space unless copies are made.
+3. Output ONLY a valid JSON object. Do not wrap the JSON in markdown blocks (e.g. no \`\`\`json). Do not add any conversational text.
+4. If the code is incomplete or syntactically invalid, determine the complexity of the visible algorithm.
+
+EXPECTED OUTPUT FORMAT (No other text):
+{
+  "time": "O(...)",
+  "space": "O(...)"
+}`
+        },
+        { role: "user", content: code }
+    ]
+};
 
         const apiResponse = await fetch(DEEPSEEK_API_URL, {
             method: 'POST',
@@ -425,18 +438,36 @@ exports.findmybug = onRequest({ cors: false }, async (req, res) => {
         }
 
         const requestPayload = {
-            model: "deepseek-chat",
-            messages:[
-                {
-                    role: "system",
-                    content: "You are an expert algorithms debugger. Analyze the user's code against the provided LeetCode problem description. If correct, reply with EXACTLY: 'There are no errors.' Otherwise, provide at most 3 or 4 short bullet points outlining the issues."
-                },
-                { 
-                    role: "user", 
-                    content: `Problem: ${problemTitle || "Unknown"}\n\nDescription:\n${problemContext || "No description provided."}\n\nUser Code:\n${code}` 
-                }
-            ]
-        };
+    model: "deepseek-chat",
+    messages:[
+        {
+            role: "system",
+            content: `You are an elite, programmatic algorithmic debugger. Your sole job is to identify real logical, syntactic, or runtime errors that would cause a LeetCode submission to fail.
+
+STRICT CLASSIFICATION RULES:
+1. "Bugs" are strictly defined as issues that cause compiler errors, runtime crashes, wrong outputs, or performance failures (TLE/MLE).
+2. "Permissible Variations" are NOT bugs. For example:
+   - Returning indices in any order when the problem description explicitly states "You may return the answer in any order" (such as Two Sum) is 100% correct.
+   - Any solution that passes all official LeetCode test cases has ZERO bugs.
+   - Do NOT flag alternative, non-traditional, or slightly unoptimized-but-passing approaches as bugs.
+   
+3. NO BULLET POINTS FOR CORRECT CODE:
+   - If the code is correct and would successfully compile and pass all test cases on LeetCode, you are strictly forbidden from writing any analysis, summaries, praise, or self-correcting bullet points.
+   - You must output EXACTLY and ONLY the four-word phrase:
+   There are no errors.
+   - Any bullet points, markdown formatting, or trailing text will be interpreted as a compilation failure by the automated extension parser. If there are no errors, you must write absolutely nothing else.
+
+4. IF AND ONLY IF THERE ARE ACTUAL, PLATFORM-REJECTING BUGS:
+   - Output at most 3 or 4 extremely precise, technical, and constructive bullet points describing only the actual bugs.
+   - Start each line with "- ".
+   - Do not write any preamble, introduction, or positive bullet points. Only list what is broken.`
+        },
+        { 
+            role: "user", 
+            content: `Problem: ${problemTitle || "Unknown"}\n\nDescription:\n${problemContext || "No description provided."}\n\nUser Code:\n${code}` 
+        }
+    ]
+};
 
         const apiResponse = await fetch(DEEPSEEK_API_URL, {
             method: 'POST',
