@@ -303,28 +303,38 @@ exports.analyze = onRequest({ cors: false }, async (req, res) => {
         if (!apiKey) return res.status(500).json({ error: 'Server configuration error' });
 
         const requestPayload = {
-    model: "deepseek-coder",
-    messages:[
-        {
-            role: "system",
-            content: `You are an elite computer science professor and expert performance analyst.
+            model: "deepseek-coder",
+            messages:[
+                {
+                    role: "system",
+                    content: `You are an elite computer science professor and expert performance analyst.
 Determine the worst-case Time Complexity and Space Complexity of the provided code snippet using strict Big O notation.
 
 STRICT RULES:
 1. TIME COMPLEXITY: Account for worst-case nested loops, recursions, and internal library functions (e.g., sorting is O(n log n), slicing is O(k)). State this as O(expression).
 2. SPACE COMPLEXITY: Account only for extra auxiliary memory allocated by your algorithm (hash tables, trees, recursive call stack). Do NOT count the input variables/structures themselves as auxiliary space unless copies are made.
 3. Output ONLY a valid JSON object. Do not wrap the JSON in markdown blocks (e.g. no \`\`\`json). Do not add any conversational text.
-4. If the code is incomplete or syntactically invalid, determine the complexity of the visible algorithm.
+
+4. INCOMPLETE OR BROKEN CODE HANDLING:
+   - If the code is incomplete, syntactically broken, has mismatched/missing braces, or contains a typo, do not give up. You must analyze the visible, typed operations and instructions currently written to estimate their Big O complexity.
+
+5. NO "N/A" OR PLACEHOLDER OUTPUTS (CRITICAL):
+   - Under no circumstances should you output "N/A", "N/A (invalid code)", or similar placeholder indicators. You must always return an exact Big O notation (e.g., "O(1)" for simple variable definitions, standard declarations, returns, or sequential non-looping statements).
+
+6. STRICT PHYSICAL SNIPPET ANALYSIS (CRITICAL):
+   - Analyze ONLY the actual, literal operations, loops, variables, and allocations currently written inside the provided code block. 
+   - DO NOT analyze what the algorithm "is supposed to do" or its "optimal theoretical counterpart" based on the function name or the problem title (e.g., if the function is named 'twoSum' but contains only standard variable initialization and an empty return statement, the complexity is strictly O(1) Time and O(1) Space).
+   - Do not assume a hash map allocation scales to O(N) space unless there is a loop or insertion operation that actually populates it with N items based on the input size. If a hash map is initialized but remains empty or only has constant-size insertions, its auxiliary space complexity is O(1).
 
 EXPECTED OUTPUT FORMAT (No other text):
 {
   "time": "O(...)",
   "space": "O(...)"
 }`
-        },
-        { role: "user", content: code }
-    ]
-};
+                },
+                { role: "user", content: code }
+            ]
+        };
 
         const apiResponse = await fetch(DEEPSEEK_API_URL, {
             method: 'POST',
@@ -438,26 +448,37 @@ exports.findmybug = onRequest({ cors: false }, async (req, res) => {
         }
 
         const requestPayload = {
-    model: "deepseek-chat",
-    messages:[
-        {
-            role: "system",
-            content: `You are an elite, programmatic algorithmic debugger. Your sole job is to identify real logical, syntactic, or runtime errors that would cause a LeetCode submission to fail.
+            model: "deepseek-coder",
+            messages:[
+                {
+                    role: "system",
+                    content: `You are an elite, programmatic algorithmic debugger. Your sole job is to identify real logical, syntactic, or runtime errors that would cause a LeetCode submission to fail.
 
 STRICT CLASSIFICATION RULES:
 1. "Bugs" are strictly defined as issues that cause compiler errors, runtime crashes, wrong outputs, or performance failures (TLE/MLE).
-2. "Permissible Variations" are NOT bugs. For example:
+   - This includes physical compiler-breaking syntax bugs, hanging characters, unclosed blocks, misplaced operators, missing semicolons, and stray characters (for example: a lone backslash '\\' or any typos outside/inside code blocks) which would trigger a compiler error like "stray '\\' in program". Look extremely closely at the code character-by-character to spot these.
+   - This also includes logical bugs like wrong answers, infinite loops, and incomplete implementations.
+
+2. LACK OF IMPLEMENTATION / EMPTY PLACEHOLDERS:
+   - If the code is just an empty template, a starter boilerplate, or only contains variable declarations and an empty/dummy return statement (e.g., returning an empty vector, empty list, null, or 0) without actually implementing the algorithm described in the problem context, this is a "Wrong Answer" bug. You must NOT say "There are no errors." Instead, output bullet points stating that the algorithm is unimplemented, incomplete, or a dummy placeholder that will fail on non-empty test cases.
+
+3. "Permissible Variations" are NOT bugs. For example:
    - Returning indices in any order when the problem description explicitly states "You may return the answer in any order" (such as Two Sum) is 100% correct.
    - Any solution that passes all official LeetCode test cases has ZERO bugs.
    - Do NOT flag alternative, non-traditional, or slightly unoptimized-but-passing approaches as bugs.
+
+4. STRICT BULLET POINT DEDUPLICATION & UNIQUE FINDINGS (CRITICAL):
+   - Each bullet point must target a completely distinct, unique root cause.
+   - Repetition of the same issue using different words is strictly forbidden.
+   - Do not separate a single error into multiple cascading bullet points (e.g., if a missing closing brace causes a compilation error, describe it inside a single bullet point. Do not create one bullet for the missing brace and another bullet for the resulting compilation error). Keep your findings clean, unique, and strictly grouped by root cause.
    
-3. NO BULLET POINTS FOR CORRECT CODE:
-   - If the code is correct and would successfully compile and pass all test cases on LeetCode, you are strictly forbidden from writing any analysis, summaries, praise, or self-correcting bullet points.
+5. NO BULLET POINTS FOR CORRECT CODE:
+   - If the code is fully implemented, correct, and would successfully compile and pass all test cases on LeetCode, you are strictly forbidden from writing any analysis, summaries, praise, or self-correcting bullet points.
    - You must output EXACTLY and ONLY the four-word phrase:
    There are no errors.
    - Any bullet points, markdown formatting, or trailing text will be interpreted as a compilation failure by the automated extension parser. If there are no errors, you must write absolutely nothing else.
 
-4. IF AND ONLY IF THERE ARE ACTUAL, PLATFORM-REJECTING BUGS:
+6. IF AND ONLY IF THERE ARE ACTUAL, PLATFORM-REJECTING BUGS:
    - Output at most 3 or 4 extremely precise, technical, and constructive bullet points describing only the actual bugs.
    - Start each line with "- ".
    - Do not write any preamble, introduction, or positive bullet points. Only list what is broken.`
@@ -570,7 +591,6 @@ exports.createRazorpayOrder = onRequest({ cors: false }, async (req, res) => {
     if (req.method !== 'POST') return res.status(405).send();
     
     try {
-        // Enforce active session validation before creating Razorpay orders
         await getOrCreateUser(req);
     } catch (authErr) {
         return res.status(401).json({ error: "AUTH_REQUIRED", message: "Sign in required before initiating purchases." });
@@ -614,7 +634,6 @@ exports.verifyPayment = onRequest({ cors: false }, async (req, res) => {
             return res.status(400).json({ error: "Missing payment parameters." });
         }
 
-        // PREVENT DOUBLE-SPEND REPLAY: Idempotency enforcement on payments database collection
         const paymentRef = db.collection("payments").doc(razorpay_payment_id);
         const paymentDoc = await paymentRef.get();
         if (paymentDoc.exists) {
@@ -647,7 +666,6 @@ exports.verifyPayment = onRequest({ cors: false }, async (req, res) => {
         }
         currentExpiry.setDate(currentExpiry.getDate() + addedDays);
 
-        // Transactional commit sequence: write payment verification record first, then update expiry
         await paymentRef.set({
             userId: user.uid,
             orderId: razorpay_order_id,
