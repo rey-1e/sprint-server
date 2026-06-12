@@ -189,7 +189,7 @@ async function getOrCreateUser(req) {
     const clientVersion = req.headers['x-client-version'];
     const authHeader = req.headers.authorization;
 
-    if (clientVersion !== '3.0') {
+    if (clientVersion && clientVersion !== '3.0') {
         return { uid: null, isLegacy: true };
     }
 
@@ -197,7 +197,11 @@ async function getOrCreateUser(req) {
         throw new Error("AuthRequired");
     }
 
-    const token = authHeader.split("Bearer ")[1];
+    const parts = authHeader.split(" ");
+    if (parts.length !== 2 || parts[0].toLowerCase() !== "bearer") {
+        throw new Error("Unauthorized");
+    }
+    const token = parts[1];
 
     const userQuery = await db.collection("users").where("sessionToken", "==", token).limit(1).get();
     if (!userQuery.empty) {
@@ -246,6 +250,7 @@ async function getOrCreateUser(req) {
 
         return { uid, ...userData, sessionToken };
     } catch (err) {
+        console.error("User Authentication Failed:", err);
         const msg = err?.message || "";
         const isAuthError = (
             msg.includes("Firebase ID token") ||
@@ -276,11 +281,11 @@ async function checkAndIncrementUsage(user, feature, limit) {
     }
 
     const userRef = db.collection("users").doc(user.uid);
-    await userRef.set({
-        usage: {
-            [feature]: admin.firestore.FieldValue.increment(1)
-        }
-    }, { merge: true });
+    
+    // Using dot-notation path update prevents overwrites of adjacent keys in nested structure
+    await userRef.update({
+        [`usage.${feature}`]: admin.firestore.FieldValue.increment(1)
+    });
 
     return true;
 }
@@ -347,14 +352,17 @@ EXPECTED OUTPUT FORMAT (No other text):
         const responseData = await apiResponse.json();
         const messageContent = responseData.choices[0].message.content;
 
-        const jsonStart = messageContent.indexOf('{');
-        const jsonEnd = messageContent.lastIndexOf('}');
+        const responseContent = messageContent.trim();
+        const jsonStart = responseContent.indexOf('{');
+        const jsonEnd = responseContent.lastIndexOf('}');
         if (jsonStart === -1 || jsonEnd === -1) throw new Error("Invalid response format from AI");
         
-        const parsedData = JSON.parse(messageContent.substring(jsonStart, jsonEnd + 1));
+        const cleanJson = responseContent.substring(jsonStart, jsonEnd + 1);
+        const parsedData = JSON.parse(cleanJson);
         return res.status(200).json(parsedData);
 
     } catch (error) {
+        console.error("Complexity Analysis Operation Error:", error);
         if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint to analyze.' });
         if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
         return res.status(500).json({ error: 'Failed to analyze code' });
@@ -412,14 +420,17 @@ exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
         const responseData = await apiResponse.json();
         const messageContent = responseData.choices[0].message.content;
 
-        const jsonStart = messageContent.indexOf('{');
-        const jsonEnd = messageContent.lastIndexOf('}');
+        const responseContent = messageContent.trim();
+        const jsonStart = responseContent.indexOf('{');
+        const jsonEnd = responseContent.lastIndexOf('}');
         if (jsonStart === -1 || jsonEnd === -1) throw new Error("Invalid response format from AI");
         
-        const parsedData = JSON.parse(messageContent.substring(jsonStart, jsonEnd + 1));
+        const cleanJson = responseContent.substring(jsonStart, jsonEnd + 1);
+        const parsedData = JSON.parse(cleanJson);
         return res.status(200).json(parsedData);
 
     } catch (error) {
+        console.error("Detailed Submission Evaluation Error:", error);
         if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint to analyze submissions.' });
         if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
         return res.status(500).json({ error: 'Failed to analyze detailed code' });
@@ -471,6 +482,8 @@ STRICT CLASSIFICATION RULES:
    - Each bullet point must target a completely distinct, unique root cause.
    - Repetition of the same issue using different words is strictly forbidden.
    - Do not separate a single error into multiple cascading bullet points (e.g., if a missing closing brace causes a compilation error, describe it inside a single bullet point. Do not create one bullet for the missing brace and another bullet for the resulting compilation error). Keep your findings clean, unique, and strictly grouped by root cause.
+   - Distinct, unrelated physical errors (such as a missing semicolon on one line and a missing bracket on another) are separate root causes and must be reported on completely separate, unique bullet points.
+   - Each bullet point must be extremely short, direct, and limited to a single concise sentence of at most 15 words. No paragraphs or verbose explanations are allowed.
    
 5. NO BULLET POINTS FOR CORRECT CODE:
    - If the code is fully implemented, correct, and would successfully compile and pass all test cases on LeetCode, you are strictly forbidden from writing any analysis, summaries, praise, or self-correcting bullet points.
@@ -481,14 +494,15 @@ STRICT CLASSIFICATION RULES:
 6. IF AND ONLY IF THERE ARE ACTUAL, PLATFORM-REJECTING BUGS:
    - Output at most 3 or 4 extremely precise, technical, and constructive bullet points describing only the actual bugs.
    - Start each line with "- ".
-   - Do not write any preamble, introduction, or positive bullet points. Only list what is broken.`
-        },
-        { 
-            role: "user", 
-            content: `Problem: ${problemTitle || "Unknown"}\n\nDescription:\n${problemContext || "No description provided."}\n\nUser Code:\n${code}` 
-        }
-    ]
-};
+   - Do not write any preamble, introduction, or positive bullet points. Only list what is broken.
+   - Each bullet point must be a single, short sentence. Do not write paragraphs or multi-sentence descriptions.`
+                },
+                { 
+                    role: "user", 
+                    content: `Problem: ${problemTitle || "Unknown"}\n\nDescription:\n${problemContext || "No description provided."}\n\nUser Code:\n${code}` 
+                }
+            ]
+        };
 
         const apiResponse = await fetch(DEEPSEEK_API_URL, {
             method: 'POST',
@@ -505,6 +519,7 @@ STRICT CLASSIFICATION RULES:
         return res.status(200).json({ feedback: messageContent });
 
     } catch (error) {
+        console.error("AI Debugging Execution Error:", error);
         if (error.message === "AuthRequired") {
             return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint.' });
         }
@@ -597,11 +612,11 @@ exports.createRazorpayOrder = onRequest({ cors: false }, async (req, res) => {
     }
 
     const { planType } = req.body; 
-    if (planType !== "1day" && planType !== "30days") {
+    if (planType !== "1day" && planType !== "30days" && planType !== "monthly" && planType !== "month" && planType !== "1month") {
         return res.status(400).json({ error: "Invalid planType selection." });
     }
 
-    const amountInPaise = planType === "1day" ? 4250 : 25500;
+    const amountInPaise = planType === "1day" ? 1200 : 7500;
 
     try {
         const order = await razorpay.orders.create({
@@ -611,6 +626,7 @@ exports.createRazorpayOrder = onRequest({ cors: false }, async (req, res) => {
         });
         return res.status(200).json(order);
     } catch (err) {
+        console.error("Razorpay Order Creation Error:", err);
         return res.status(500).json({ error: "Unable to process payment gateway order." });
     }
 });
@@ -681,6 +697,7 @@ exports.verifyPayment = onRequest({ cors: false }, async (req, res) => {
 
         return res.status(200).json({ success: true, expiry: currentExpiry.getTime() });
     } catch (err) {
+        console.error("Razorpay Payment Verification Error:", err);
         return res.status(500).json({ error: err.message });
     }
 });
