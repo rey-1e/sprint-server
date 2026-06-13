@@ -308,7 +308,8 @@ exports.analyze = onRequest({ cors: false }, async (req, res) => {
         if (!apiKey) return res.status(500).json({ error: 'Server configuration error' });
 
         const requestPayload = {
-            model: "deepseek-coder",
+            model: "deepseek-v4-flash", // Updated model
+            thinking: { type: "disabled" }, // Disables slow/expensive chain-of-thought
             messages:[
                 {
                     role: "system",
@@ -387,7 +388,8 @@ exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
         if (!apiKey) return res.status(500).json({ error: 'Server configuration error' });
 
         const requestPayload = {
-            model: "deepseek-coder",
+            model: "deepseek-v4-flash", // Updated model
+            thinking: { type: "disabled" }, // Disables slow/expensive chain-of-thought
             messages:[
                 {
                     role: "system",
@@ -459,15 +461,17 @@ exports.findmybug = onRequest({ cors: false }, async (req, res) => {
         }
 
         const requestPayload = {
-            model: "deepseek-coder",
+            model: "deepseek-v4-flash",
+            thinking: { type: "disabled" },
             messages:[
                 {
                     role: "system",
                     content: `You are an elite, programmatic algorithmic debugger. Your sole job is to identify real logical, syntactic, or runtime errors that would cause a LeetCode submission to fail.
 
 STRICT CLASSIFICATION RULES:
-1. "Bugs" are strictly defined as issues that cause compiler errors, runtime crashes, wrong outputs, or performance failures (TLE/MLE).
-   - This includes physical compiler-breaking syntax bugs, hanging characters, unclosed blocks, misplaced operators, missing semicolons, and stray characters (for example: a lone backslash '\\' or any typos outside/inside code blocks) which would trigger a compiler error like "stray '\\' in program". Look extremely closely at the code character-by-character to spot these.
+1. "Bugs" are strictly defined as actual issues that cause compilation failures, runtime crashes, wrong outputs, or performance failures (TLE/MLE).
+   - Only report physical syntactic errors (such as missing semicolons, unmatched braces, or unclosed blocks) if they genuinely prevent the code from compiling. 
+   - Do not hallucinate or invent syntax errors (such as fake backslashes or typos inside standard comments) where they do not physically exist.
    - This also includes logical bugs like wrong answers, infinite loops, and incomplete implementations.
 
 2. LACK OF IMPLEMENTATION / EMPTY PLACEHOLDERS:
@@ -481,15 +485,15 @@ STRICT CLASSIFICATION RULES:
 4. STRICT BULLET POINT DEDUPLICATION & UNIQUE FINDINGS (CRITICAL):
    - Each bullet point must target a completely distinct, unique root cause.
    - Repetition of the same issue using different words is strictly forbidden.
-   - Do not separate a single error into multiple cascading bullet points (e.g., if a missing closing brace causes a compilation error, describe it inside a single bullet point. Do not create one bullet for the missing brace and another bullet for the resulting compilation error). Keep your findings clean, unique, and strictly grouped by root cause.
-   - Distinct, unrelated physical errors (such as a missing semicolon on one line and a missing bracket on another) are separate root causes and must be reported on completely separate, unique bullet points.
+   - Do not separate a single error into multiple cascading bullet points. Keep your findings clean, unique, and strictly grouped by root cause.
+   - Distinct, unrelated physical errors are separate root causes and must be reported on completely separate, unique bullet points.
    - Each bullet point must be extremely short, direct, and limited to a single concise sentence of at most 15 words. No paragraphs or verbose explanations are allowed.
    
 5. NO BULLET POINTS FOR CORRECT CODE:
-   - If the code is fully implemented, correct, and would successfully compile and pass all test cases on LeetCode, you are strictly forbidden from writing any analysis, summaries, praise, or self-correcting bullet points.
+   - If the code is correct, fully implemented, compiles, and passes all test cases, you must not invent, exaggerate, or hallucinate any issues. You are strictly forbidden from writing any analysis, summaries, warnings, or bullet points.
    - You must output EXACTLY and ONLY the four-word phrase:
    There are no errors.
-   - Any bullet points, markdown formatting, or trailing text will be interpreted as a compilation failure by the automated extension parser. If there are no errors, you must write absolutely nothing else.
+   - If there are no actual compile-breaking or test-failing errors, you must write absolutely nothing else.
 
 6. IF AND ONLY IF THERE ARE ACTUAL, PLATFORM-REJECTING BUGS:
    - Output at most 3 or 4 extremely precise, technical, and constructive bullet points describing only the actual bugs.
