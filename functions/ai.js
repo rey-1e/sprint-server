@@ -245,3 +245,64 @@ STRICT CLASSIFICATION RULES:
         return res.status(500).json({ error: `Server error: ${error.message}` });
     }
 });
+
+exports.sprintAIChat = onRequest({ cors: false }, async (req, res) => {
+    if (handleCors(req, res)) return;
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+
+    try {
+        const user = await getOrCreateUser(req);
+        const allowed = await checkAndIncrementUsage(user, "chat", 3);
+        if (!allowed) {
+            return res.status(403).json({ error: "LIMIT_REACHED", message: "You have used your 3 free sprintAI chat queries. Upgrade to premium for unlimited access!" });
+        }
+
+        const { message, history } = req.body;
+        if (!message) return res.status(400).json({ error: 'Message is required' });
+
+        const apiKey = process.env.DEEPSEEK_API_KEY;
+        if (!apiKey) return res.status(500).json({ error: 'Server configuration error' });
+
+        const formattedMessages = [
+            {
+                role: "system",
+                content: `You are sprintAI, a highly specialized, concise, and professional software engineering assistant embedded inside the LeetCode Sprint extension.
+Your answers must be extremely direct, accurate, and tailored precisely to the user's technical query.
+Do not speak more than necessary. Do not include verbose introductions, conversational filler, or verbose explanations unless explicitly requested. Keep code snippets clean and minimal.`
+            }
+        ];
+
+        if (history && Array.isArray(history)) {
+            history.forEach(h => {
+                formattedMessages.push({ role: h.role, content: h.content });
+            });
+        }
+
+        formattedMessages.push({ role: "user", content: message });
+
+        const requestPayload = {
+            model: "deepseek-v4-flash",
+            thinking: { type: "disabled" },
+            messages: formattedMessages
+        };
+
+        const apiResponse = await fetch(DEEPSEEK_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+            body: JSON.stringify(requestPayload)
+        });
+
+        if (!apiResponse.ok) throw new Error(`DeepSeek API responded with status ${apiResponse.status}`);
+
+        const responseData = await apiResponse.json();
+        const reply = responseData.choices[0].message.content.trim();
+
+        return res.status(200).json({ reply });
+
+    } catch (error) {
+        console.error("SprintAI Chat Error:", error);
+        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint to use AI Chat.' });
+        if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
+        return res.status(500).json({ error: 'Failed to process AI chat query' });
+    }
+});

@@ -1,4 +1,4 @@
-const { analyze, analyzeDetailed, findmybug } = require("./ai");
+const { analyze, analyzeDetailed, findmybug, sprintAIChat } = require("./ai");
 const { syncUser, getTheme } = require("./user");
 const { createRazorpayOrder, verifyPayment } = require("./payments");
 
@@ -10,3 +10,4 @@ exports.getTheme = getTheme;
 exports.syncUser = syncUser;
 exports.createRazorpayOrder = createRazorpayOrder;
 exports.verifyPayment = verifyPayment;
+exports.sprintAIChat = sprintAIChat;

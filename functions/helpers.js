@@ -35,7 +35,7 @@ async function getOrCreateUser(req) {
         const userDoc = userQuery.docs[0];
         const data = userDoc.data();
         if (!data.usage || typeof data.usage !== 'object') {
-            data.usage = { complexity: 0, detailed: 0, bug: 0 };
+            data.usage = { complexity: 0, detailed: 0, bug: 0, chat: 0 };
         }
         return { uid: userDoc.id, ...data };
     }
@@ -56,7 +56,7 @@ async function getOrCreateUser(req) {
                 email: email || "",
                 premiumUntil: null,
                 sessionToken: sessionToken,
-                usage: { complexity: 0, detailed: 0, bug: 0 },
+                usage: { complexity: 0, detailed: 0, bug: 0, chat: 0 },
                 createdAt: admin.firestore.FieldValue.serverTimestamp()
             };
             await userRef.set(userData);
@@ -72,7 +72,7 @@ async function getOrCreateUser(req) {
         }
 
         if (!userData.usage || typeof userData.usage !== 'object') {
-            userData.usage = { complexity: 0, detailed: 0, bug: 0 };
+            userData.usage = { complexity: 0, detailed: 0, bug: 0, chat: 0 };
         }
 
         return { uid, ...userData, sessionToken };
