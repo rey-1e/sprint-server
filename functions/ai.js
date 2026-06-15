@@ -76,7 +76,7 @@ EXPECTED OUTPUT FORMAT (No other text):
 
     } catch (error) {
         console.error("Complexity Analysis Operation Error:", error);
-        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint to analyze.' });
+        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to CodeSprint to analyze.' });
         if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
         return res.status(500).json({ error: 'Failed to analyze code' });
     }
@@ -145,7 +145,7 @@ exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
 
     } catch (error) {
         console.error("Detailed Submission Evaluation Error:", error);
-        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint to analyze submissions.' });
+        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to CodeSprint to analyze submissions.' });
         if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
         return res.status(500).json({ error: 'Failed to analyze detailed code' });
     }
@@ -178,7 +178,7 @@ exports.findmybug = onRequest({ cors: false }, async (req, res) => {
             messages:[
                 {
                     role: "system",
-                    content: `You are an elite, programmatic algorithmic debugger. Your sole job is to identify real logical, syntactic, or runtime errors that would cause a LeetCode submission to fail.
+                    content: `You are an elite, programmatic algorithmic debugger. Your sole job is to identify real logical, syntactic, or runtime errors that would cause a submission to fail.
 
 STRICT CLASSIFICATION RULES:
 1. "Bugs" are strictly defined as actual issues that cause compilation failures, runtime crashes, wrong outputs, or performance failures (TLE/MLE).
@@ -191,7 +191,7 @@ STRICT CLASSIFICATION RULES:
 
 3. "Permissible Variations" are NOT bugs. For example:
    - Returning indices in any order when the problem description explicitly states "You may return the answer in any order" (such as Two Sum) is 100% correct.
-   - Any solution that passes all official LeetCode test cases has ZERO bugs.
+   - Any solution that passes all official test cases has ZERO bugs. Do Not hallucinate and put unnecessary points as bugs, it's fine if the code style is different.
    - Do NOT flag alternative, non-traditional, or slightly unoptimized-but-passing approaches as bugs.
 
 4. STRICT BULLET POINT DEDUPLICATION & UNIQUE FINDINGS (CRITICAL):
@@ -237,7 +237,7 @@ STRICT CLASSIFICATION RULES:
     } catch (error) {
         console.error("AI Debugging Execution Error:", error);
         if (error.message === "AuthRequired") {
-            return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint.' });
+            return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to CodeSprint.' });
         }
         if (error.message === "Unauthorized") {
             return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
@@ -266,9 +266,9 @@ exports.sprintAIChat = onRequest({ cors: false }, async (req, res) => {
         const formattedMessages = [
             {
                 role: "system",
-                content: `You are sprintAI, a highly specialized, concise, and professional software engineering assistant embedded inside the LeetCode Sprint extension.
+                content: `You are sprintAI, a highly specialized, concise, and professional software engineering assistant embedded inside the CodeSprint extension.
 Your answers must be extremely direct, accurate, and tailored precisely to the user's technical query.
-Do not speak more than necessary. Do not include verbose introductions, conversational filler, or verbose explanations unless explicitly requested. Keep code snippets clean and minimal.`
+Do not speak more than necessary. Do not include verbose introductions, conversational filler, or verbose explanations unless explicitly requested. Keep code snippets clean and minimal. If you are asked anything about the extension, make sure to NOT include anything more than the official website of the extension (https://getsprint.me)`
             }
         ];
 
@@ -301,7 +301,7 @@ Do not speak more than necessary. Do not include verbose introductions, conversa
 
     } catch (error) {
         console.error("SprintAI Chat Error:", error);
-        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to LeetCode Sprint to use AI Chat.' });
+        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to CodeSprint to use AI Chat.' });
         if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
         return res.status(500).json({ error: 'Failed to process AI chat query' });
     }
