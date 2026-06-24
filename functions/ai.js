@@ -8,9 +8,9 @@ exports.analyze = onRequest({ cors: false }, async (req, res) => {
 
     try {
         const user = await getOrCreateUser(req);
-        const allowed = await checkAndIncrementUsage(user, "complexity", 5);
+        const allowed = await checkAndIncrementUsage(user, "complexity", 15);
         if (!allowed) {
-            return res.status(403).json({ error: "LIMIT_REACHED", message: "You have used your 5 free complexity analyses. Upgrade to premium for unlimited access!" });
+            return res.status(403).json({ error: "LIMIT_REACHED", message: "You have used your 15 free complexity analyses. Upgrade to premium for unlimited access!" });
         }
 
         const { code } = req.body;
@@ -87,12 +87,6 @@ exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
     
     try {
-        const user = await getOrCreateUser(req);
-        const allowed = await checkAndIncrementUsage(user, "detailed", 5);
-        if (!allowed) {
-            return res.status(403).json({ error: "LIMIT_REACHED", message: "You have used your 5 free post-submission analyses. Upgrade to premium for unlimited access!" });
-        }
-
         const { code } = req.body;
         if (!code) return res.status(400).json({ error: 'Code is required' });
 
@@ -145,8 +139,6 @@ exports.analyzeDetailed = onRequest({ cors: false }, async (req, res) => {
 
     } catch (error) {
         console.error("Detailed Submission Evaluation Error:", error);
-        if (error.message === "AuthRequired") return res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Sign in to CodeSprint to analyze submissions.' });
-        if (error.message === "Unauthorized") return res.status(401).json({ error: 'Unauthorized', message: 'Session expired. Please log in again.' });
         return res.status(500).json({ error: 'Failed to analyze detailed code' });
     }
 });
@@ -157,9 +149,9 @@ exports.findmybug = onRequest({ cors: false }, async (req, res) => {
 
     try {
         const user = await getOrCreateUser(req);
-        const allowed = await checkAndIncrementUsage(user, "bug", 3);
+        const allowed = await checkAndIncrementUsage(user, "bug", 7);
         if (!allowed) {
-            return res.status(403).json({ error: "LIMIT_REACHED", message: "You have used your 3 free debugger checks. Upgrade to premium for unlimited access!" });
+            return res.status(403).json({ error: "LIMIT_REACHED", message: "You have used your 7 free debugger checks. Upgrade to premium for unlimited access!" });
         }
 
         const { code, problemTitle, problemContext } = req.body;
@@ -252,9 +244,9 @@ exports.sprintAIChat = onRequest({ cors: false }, async (req, res) => {
 
     try {
         const user = await getOrCreateUser(req);
-        const allowed = await checkAndIncrementUsage(user, "chat", 3);
+        const allowed = await checkAndIncrementUsage(user, "chat", 10);
         if (!allowed) {
-            return res.status(403).json({ error: "LIMIT_REACHED", message: "You have used your 3 free sprintAI chat queries. Upgrade to premium for unlimited access!" });
+            return res.status(403).json({ error: "LIMIT_REACHED", message: "You have used your 10 free sprintAI chat queries. Upgrade to premium for unlimited access!" });
         }
 
         const { message, history } = req.body;
