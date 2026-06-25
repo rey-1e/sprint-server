@@ -102,18 +102,37 @@ async function checkAndIncrementUsage(user, feature, limit) {
         return true; 
     }
 
-    const currentUsage = (user.usage && user.usage[feature]) || 0;
-    if (currentUsage >= limit) {
-        return false; 
-    }
-
+    const todayStr = new Date().toISOString().slice(0, 10);
     const userRef = db.collection("users").doc(user.uid);
-    
-    await userRef.update({
-        [`usage.${feature}`]: admin.firestore.FieldValue.increment(1)
+
+    let allowed = false;
+    await db.runTransaction(async (transaction) => {
+        const sfDoc = await transaction.get(userRef);
+        if (!sfDoc.exists) {
+            return;
+        }
+
+        const data = sfDoc.data();
+        let lastReset = data.lastResetDate;
+        let usage = data.usage || { complexity: 0, detailed: 0, bug: 0, chat: 0 };
+
+        if (lastReset !== todayStr) {
+            usage = { complexity: 0, detailed: 0, bug: 0, chat: 0 };
+            lastReset = todayStr;
+        }
+
+        const currentUsage = usage[feature] || 0;
+        if (currentUsage < limit) {
+            allowed = true;
+            usage[feature] = currentUsage + 1;
+            transaction.update(userRef, {
+                usage: usage,
+                lastResetDate: lastReset
+            });
+        }
     });
 
-    return true;
+    return allowed;
 }
 
 module.exports = {
